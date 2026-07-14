@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -38,7 +38,7 @@
             transform: scaleX(-1); 
             box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
             margin-bottom: 20px;
-            display: none; /* 시작 버튼을 누르기 전엔 숨김 */
+            display: none; 
         }
         .timer-display {
             font-size: 56px;
@@ -46,13 +46,13 @@
             margin-bottom: 20px;
             font-variant-numeric: tabular-nums;
             color: #fff;
-            display: none; /* 시작 버튼을 누르기 전엔 숨김 */
+            display: none; 
         }
         .btn-group {
             display: flex;
             gap: 15px;
             margin-bottom: 30px;
-            display: none; /* 시작 버튼을 누르기 전엔 숨김 */
+            display: none; 
         }
         button { 
             padding: 14px 28px; 
@@ -68,7 +68,6 @@
         button:active { transform: scale(0.95); }
         button.stop-btn { background: #ff4757; color: white; }
         
-        /* 최초 앱 시작용 대형 버튼 */
         #start-app-btn {
             padding: 20px 40px;
             font-size: 22px;
@@ -142,4 +141,145 @@
     let model, maxPredictions;
     let isRunning = false;
     let startTime;
-    let timer
+    let timerInterval;
+    let emotionCounts = {};
+
+    window.onload = () => {
+        loadLogs();
+    };
+
+    async function initApp() {
+        const startBtn = document.getElementById('start-app-btn');
+        startBtn.innerText = "카메라 연결 중...";
+        startBtn.disabled = true;
+
+        const video = document.getElementById('webcam');
+
+        try {
+            // 해결 지점: 무거운 AI 모델 로딩 전에 카메라 권한을 '최우선'으로 요청하도록 순서 변경
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                video.srcObject = stream;
+                
+                // 카메라 화면이 준비될 때까지 대기
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resolve();
+                    };
+                });
+
+                // 카메라가 켜지면 UI를 교체하고 그제서야 AI 모델을 백그라운드에서 다운로드 시작
+                startBtn.style.display = 'none';
+                video.style.display = 'block';
+                document.getElementById('top-emotion').innerText = "AI 모델 다운로드 중...";
+
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+                
+                // 모델 로딩 완료 시 타이머 컨트롤 UI 표시 및 감지 루프 시작
+                document.getElementById('timer').style.display = 'block';
+                document.getElementById('controls').style.display = 'flex';
+                document.getElementById('top-emotion').innerText = "분석 시작";
+                
+                window.requestAnimationFrame(loop);
+            } else {
+                alert("카메라를 지원하지 않는 기기입니다.");
+                startBtn.innerText = "카메라 및 AI 시작하기";
+                startBtn.disabled = false;
+            }
+        } catch (error) {
+            console.error(error);
+            alert("카메라 권한 거부 또는 에러: " + error.message);
+            startBtn.innerText = "카메라 및 AI 시작하기";
+            startBtn.disabled = false;
+        }
+    }
+
+    async function loop() {
+        const video = document.getElementById('webcam');
+        if (video.readyState >= 2) { 
+            const prediction = await model.predict(video);
+            let highestProb = 0;
+            let topEmotionName = "";
+            
+            for (let i = 0; i < maxPredictions; i++) {
+                if (prediction[i].probability > highestProb) {
+                    highestProb = prediction[i].probability;
+                    topEmotionName = prediction[i].className;
+                }
+            }
+            
+            document.getElementById('top-emotion').innerText = `${topEmotionName} (${(highestProb * 100).toFixed(0)}%)`;
+            
+            if (isRunning) {
+                emotionCounts[topEmotionName] = (emotionCounts[topEmotionName] || 0) + 1;
+            }
+        }
+        window.requestAnimationFrame(loop);
+    }
+
+    function startSession() {
+        if (isRunning) return;
+        isRunning = true;
+        emotionCounts = {};
+        startTime = Date.now();
+        
+        timerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+            const secs = String(elapsed % 60).padStart(2, '0');
+            document.getElementById('timer').innerText = `${mins}:${secs}`;
+        }, 1000);
+    }
+
+    function stopSession() {
+        if (!isRunning) return;
+        isRunning = false;
+        clearInterval(timerInterval);
+        
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const secs = String(elapsed % 60).padStart(2, '0');
+        const duration = `${mins}:${secs}`;
+        
+        let dominantEmotion = "측정 불가";
+        let maxCount = 0;
+        
+        for (const [emotion, count] of Object.entries(emotionCounts)) {
+            if (count > maxCount) {
+                maxCount = count;
+                dominantEmotion = emotion;
+            }
+        }
+
+        const now = new Date();
+        const dateString = `${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        
+        saveLog(dateString, duration, dominantEmotion);
+        document.getElementById('timer').innerText = "00:00";
+    }
+
+    function saveLog(date, duration, emotion) {
+        let logs = JSON.parse(localStorage.getItem('emotionLogs')) || [];
+        logs.unshift({ date, duration, emotion });
+        localStorage.setItem('emotionLogs', JSON.stringify(logs));
+        loadLogs();
+    }
+
+    function loadLogs() {
+        const logs = JSON.parse(localStorage.getItem('emotionLogs')) || [];
+        const container = document.getElementById('log-container');
+        container.innerHTML = '';
+        logs.forEach(log => {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerHTML = `<span>📅 ${log.date}</span> <span>⏱ ${log.duration} | 🧠 ${log.emotion}</span>`;
+            container.appendChild(div);
+        });
+    }
+</script>
+</body>
+</html>
