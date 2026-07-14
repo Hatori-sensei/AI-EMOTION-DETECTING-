@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>감정 감지 앱</title>
+    <title>스마트 멘탈케어 타이머</title>
     <style>
         body { 
             margin: 0; 
@@ -11,12 +11,12 @@
             background-color: #121212; 
             color: #fff; 
         }
-        /* 가로 화면일 때 5:5 화면 분할 */
         #app { 
             display: flex; 
             height: 100vh; 
             flex-direction: column; 
         }
+        /* 깔끔한 5:5 화면 분할 구조 */
         @media (min-width: 768px) { 
             #app { flex-direction: row; } 
         }
@@ -27,53 +27,98 @@
             justify-content: center; 
             align-items: center; 
             padding: 20px; 
+            box-sizing: border-box;
         }
-        .cam-section { background-color: #1e1e1e; }
+        .cam-section { background-color: #1e1e1e; border-right: 1px solid #333; }
         .ui-section { background-color: #2c2c2c; }
         
         video { 
             width: 100%; 
-            max-width: 450px; 
+            max-width: 400px; 
             border-radius: 16px; 
-            transform: scaleX(-1); /* 거울처럼 보이게 좌우반전 */
+            transform: scaleX(-1); 
             box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
+            margin-bottom: 20px;
+        }
+        .timer-display {
+            font-size: 56px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            font-variant-numeric: tabular-nums;
+            color: #fff;
+        }
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
         }
         button { 
-            padding: 15px 30px; 
+            padding: 14px 28px; 
             font-size: 18px; 
             font-weight: bold; 
-            border-radius: 12px; 
+            border-radius: 10px; 
             background: #fff; 
             color: #000; 
             border: none; 
             cursor: pointer; 
-            margin-bottom: 30px; 
+            transition: 0.2s;
         }
-        #label-container { 
-            width: 100%; 
-            max-width: 350px; 
+        button:active { transform: scale(0.95); }
+        button.stop-btn { background: #ff4757; color: white; }
+        
+        .status-card {
+            background: #444;
+            padding: 25px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 380px;
+            text-align: center;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         }
-        .emotion-bar { 
-            background: #444; 
-            margin: 10px 0; 
-            border-radius: 8px; 
-            padding: 15px; 
-            display: flex; 
-            justify-content: space-between; 
-            font-size: 18px; 
-            font-weight: bold; 
+        .current-emotion {
+            font-size: 28px;
+            font-weight: bold;
+            color: #1dd1a1;
+            margin-top: 10px;
         }
+        #log-container {
+            width: 100%;
+            max-width: 380px;
+            height: 250px;
+            overflow-y: auto;
+            background: #333;
+            border-radius: 16px;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        .log-entry {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #555;
+            font-size: 15px;
+        }
+        .log-entry:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
 <div id="app">
     <div class="cam-section">
-        <!-- iOS 사파리 카메라 필수 속성 -->
         <video id="webcam" playsinline autoplay muted></video>
+        <div class="timer-display" id="timer">00:00</div>
+        <div class="btn-group">
+            <button onclick="startSession()">▶ 집중 시작</button>
+            <button class="stop-btn" onclick="stopSession()">■ 세션 종료</button>
+        </div>
     </div>
     <div class="ui-section">
-        <button onclick="startApp()">카메라 켜기</button>
-        <div id="label-container"></div>
+        <div class="status-card">
+            <div style="color:#aaa; font-size:14px;">현재 가장 높은 감정</div>
+            <div class="current-emotion" id="top-emotion">분석 중...</div>
+        </div>
+        <div style="width:100%; max-width:380px; margin-bottom:10px; font-weight:bold; font-size:18px;">나의 집중 & 감정 기록</div>
+        <div id="log-container"></div>
     </div>
 </div>
 
@@ -81,26 +126,19 @@
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 <script>
     const URL = "https://teachablemachine.withgoogle.com/models/Z_S8oRbeo/";
-    let model, maxPredictions, labelContainer;
+    let model, maxPredictions;
+    let isRunning = false;
+    let startTime;
+    let timerInterval;
+    let emotionCounts = {};
 
-    async function startApp() {
+    async function initModel() {
         const modelURL = URL + "model.json";
         const metadataURL = URL + "metadata.json";
-        
-        // 모델 로드
         model = await tmImage.load(modelURL, metadataURL);
         maxPredictions = model.getTotalClasses();
         
-        labelContainer = document.getElementById("label-container");
-        labelContainer.innerHTML = '';
-        for (let i = 0; i < maxPredictions; i++) {
-            labelContainer.appendChild(document.createElement("div"));
-            labelContainer.childNodes[i].className = "emotion-bar";
-        }
-
         const video = document.getElementById('webcam');
-        
-        // 아이패드/모바일 카메라 접근
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
             video.srcObject = stream;
@@ -111,21 +149,96 @@
         } else {
             alert("카메라를 지원하지 않는 브라우저입니다.");
         }
+        loadLogs();
     }
 
     async function loop() {
         const video = document.getElementById('webcam');
-        // 비디오 데이터가 충분히 로드되었을 때만 예측 실행
-        if (video.readyState === 4) { 
+        if (video.readyState >= 2) { 
             const prediction = await model.predict(video);
+            let highestProb = 0;
+            let topEmotionName = "";
+            
             for (let i = 0; i < maxPredictions; i++) {
-                const className = prediction[i].className;
-                const probability = (prediction[i].probability * 100).toFixed(0);
-                labelContainer.childNodes[i].innerHTML = `<span>${className}</span> <span>${probability}%</span>`;
+                if (prediction[i].probability > highestProb) {
+                    highestProb = prediction[i].probability;
+                    topEmotionName = prediction[i].className;
+                }
+            }
+            
+            document.getElementById('top-emotion').innerText = `${topEmotionName} (${(highestProb * 100).toFixed(0)}%)`;
+            
+            // 타이머가 실행 중일 때만 감정 빈도수 기록
+            if (isRunning) {
+                emotionCounts[topEmotionName] = (emotionCounts[topEmotionName] || 0) + 1;
             }
         }
         window.requestAnimationFrame(loop);
     }
+
+    function startSession() {
+        if (isRunning) return;
+        isRunning = true;
+        emotionCounts = {};
+        startTime = Date.now();
+        
+        timerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+            const secs = String(elapsed % 60).padStart(2, '0');
+            document.getElementById('timer').innerText = `${mins}:${secs}`;
+        }, 1000);
+    }
+
+    function stopSession() {
+        if (!isRunning) return;
+        isRunning = false;
+        clearInterval(timerInterval);
+        
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const secs = String(elapsed % 60).padStart(2, '0');
+        const duration = `${mins}:${secs}`;
+        
+        let dominantEmotion = "측정 불가";
+        let maxCount = 0;
+        
+        // 세션 중 가장 많이 감지된 감정 계산
+        for (const [emotion, count] of Object.entries(emotionCounts)) {
+            if (count > maxCount) {
+                maxCount = count;
+                dominantEmotion = emotion;
+            }
+        }
+
+        const now = new Date();
+        const dateString = `${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        
+        saveLog(dateString, duration, dominantEmotion);
+        document.getElementById('timer').innerText = "00:00";
+    }
+
+    function saveLog(date, duration, emotion) {
+        let logs = JSON.parse(localStorage.getItem('emotionLogs')) || [];
+        logs.unshift({ date, duration, emotion });
+        localStorage.setItem('emotionLogs', JSON.stringify(logs));
+        loadLogs();
+    }
+
+    function loadLogs() {
+        const logs = JSON.parse(localStorage.getItem('emotionLogs')) || [];
+        const container = document.getElementById('log-container');
+        container.innerHTML = '';
+        logs.forEach(log => {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerHTML = `<span>📅 ${log.date}</span> <span>⏱ ${log.duration} | 🧠 ${log.emotion}</span>`;
+            container.appendChild(div);
+        });
+    }
+
+    // 초기 실행
+    initModel();
 </script>
 </body>
 </html>
