@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>감정 감지 앱</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: 'Pretendard', sans-serif; 
+            background-color: #121212; 
+            color: #fff; 
+        }
+        /* 가로 화면일 때 5:5 화면 분할 */
+        #app { 
+            display: flex; 
+            height: 100vh; 
+            flex-direction: column; 
+        }
+        @media (min-width: 768px) { 
+            #app { flex-direction: row; } 
+        }
+        .cam-section, .ui-section { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            padding: 20px; 
+        }
+        .cam-section { background-color: #1e1e1e; }
+        .ui-section { background-color: #2c2c2c; }
+        
+        video { 
+            width: 100%; 
+            max-width: 450px; 
+            border-radius: 16px; 
+            transform: scaleX(-1); /* 거울처럼 보이게 좌우반전 */
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
+        }
+        button { 
+            padding: 15px 30px; 
+            font-size: 18px; 
+            font-weight: bold; 
+            border-radius: 12px; 
+            background: #fff; 
+            color: #000; 
+            border: none; 
+            cursor: pointer; 
+            margin-bottom: 30px; 
+        }
+        #label-container { 
+            width: 100%; 
+            max-width: 350px; 
+        }
+        .emotion-bar { 
+            background: #444; 
+            margin: 10px 0; 
+            border-radius: 8px; 
+            padding: 15px; 
+            display: flex; 
+            justify-content: space-between; 
+            font-size: 18px; 
+            font-weight: bold; 
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="cam-section">
+        <!-- iOS 사파리 카메라 필수 속성 -->
+        <video id="webcam" playsinline autoplay muted></video>
+    </div>
+    <div class="ui-section">
+        <button onclick="startApp()">카메라 켜기</button>
+        <div id="label-container"></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<script>
+    const URL = "https://teachablemachine.withgoogle.com/models/Z_S8oRbeo/";
+    let model, maxPredictions, labelContainer;
+
+    async function startApp() {
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+        
+        // 모델 로드
+        model = await tmImage.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+        
+        labelContainer = document.getElementById("label-container");
+        labelContainer.innerHTML = '';
+        for (let i = 0; i < maxPredictions; i++) {
+            labelContainer.appendChild(document.createElement("div"));
+            labelContainer.childNodes[i].className = "emotion-bar";
+        }
+
+        const video = document.getElementById('webcam');
+        
+        // 아이패드/모바일 카메라 접근
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                video.play();
+                window.requestAnimationFrame(loop);
+            };
+        } else {
+            alert("카메라를 지원하지 않는 브라우저입니다.");
+        }
+    }
+
+    async function loop() {
+        const video = document.getElementById('webcam');
+        // 비디오 데이터가 충분히 로드되었을 때만 예측 실행
+        if (video.readyState === 4) { 
+            const prediction = await model.predict(video);
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = prediction[i].className;
+                const probability = (prediction[i].probability * 100).toFixed(0);
+                labelContainer.childNodes[i].innerHTML = `<span>${className}</span> <span>${probability}%</span>`;
+            }
+        }
+        window.requestAnimationFrame(loop);
+    }
+</script>
+</body>
+</html>
